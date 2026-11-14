@@ -119,7 +119,10 @@ class CubesMonitor:
         self.cpu_history = deque([0.0] * 60, maxlen=60)
         self.ram_history = deque([0.0] * 60, maxlen=60)
         self.previous_net = psutil.net_io_counters()
+        self.previous_disk = psutil.disk_io_counters()
         self.previous_time = time.monotonic()
+        self.process_sort = tk.StringVar(value="CPU")
+        self.process_filter = tk.StringVar()
         self.gpu_name = get_gpu_name()
         self.gpu_usage: float | None = None
         self.gpu_queue: queue.Queue[float | None] = queue.Queue()
@@ -203,6 +206,22 @@ class CubesMonitor:
         process_panel.pack(fill="both", expand=True, padx=24, pady=(8, 12))
         tk.Label(process_panel, text="TOP PROCESSES", bg=BG, fg=MUTED,
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 7))
+        process_tools = tk.Frame(process_panel, bg=BG)
+        process_tools.pack(fill="x", pady=(0, 6))
+        tk.Label(process_tools, text="Filter:", bg=BG, fg=MUTED,
+                 font=("Segoe UI", 9)).pack(side="left")
+        filter_entry = tk.Entry(process_tools, textvariable=self.process_filter,
+                                bg=PANEL_ALT, fg=TEXT, insertbackground=TEXT,
+                                relief="flat", font=("Segoe UI", 9), width=25)
+        filter_entry.pack(side="left", padx=(7, 14), ipady=4)
+        tk.Label(process_tools, text="Sort by:", bg=BG, fg=MUTED,
+                 font=("Segoe UI", 9)).pack(side="left")
+        sort_box = ttk.Combobox(process_tools, textvariable=self.process_sort,
+                                values=("CPU", "Memory"), state="readonly",
+                                width=10)
+        sort_box.pack(side="left", padx=7)
+        sort_box.bind("<<ComboboxSelected>>", lambda _event: self._update_processes())
+
         columns = ("name", "pid", "cpu", "memory")
         self.processes = ttk.Treeview(process_panel, columns=columns,
                                       show="headings", height=7)
@@ -277,19 +296,25 @@ class CubesMonitor:
         canvas.create_text(right - 42, 8, text="RAM", fill=GREEN, anchor="ne",
                            font=("Segoe UI", 8, "bold"))
 
-    def _update_info(self, download: float, upload: float) -> None:
+    def _update_info(self, download: float, upload: float,
+                     disk_read: float, disk_write: float) -> None:
         boot = datetime.fromtimestamp(psutil.boot_time()).strftime("%Y-%m-%d %H:%M")
+        frequency = psutil.cpu_freq()
+        frequency_text = f"{frequency.current / 1000:.2f} GHz" if frequency and frequency.current else "Unavailable"
         lines = [
             f"Device: {platform.node()}",
             f"Operating system: {platform.system()} {platform.release()}",
             f"Processor: {platform.processor() or 'Unknown'}",
             f"Logical CPUs: {psutil.cpu_count(logical=True) or 'Unknown'}",
             f"Physical cores: {psutil.cpu_count(logical=False) or 'Unknown'}",
+            f"Current CPU frequency: {frequency_text}",
             f"Boot time: {boot}",
             f"Administrator: {'Yes' if is_admin() else 'No'}",
             "",
             f"Network download: {format_rate(download)}",
             f"Network upload: {format_rate(upload)}",
+            f"Disk read: {format_rate(disk_read)}",
+            f"Disk write: {format_rate(disk_write)}",
         ]
         self.info.configure(state="normal")
         self.info.delete("1.0", "end")
@@ -310,9 +335,13 @@ class CubesMonitor:
                              info.get("pid") or 0, cpu, memory))
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
-        rows.sort(key=lambda item: item[2], reverse=True)
+        needle = self.process_filter.get().strip().casefold()
+        if needle:
+            rows = [row for row in rows if needle in row[0].casefold()]
+        sort_index = 3 if self.process_sort.get() == "Memory" else 2
+        rows.sort(key=lambda item: item[sort_index], reverse=True)
         self.processes.delete(*self.processes.get_children())
-        for name, pid, cpu, memory in rows[:12]:
+        for name, pid, cpu, memory in rows[:30]:
             self.processes.insert("", "end", values=(
                 name[:52], pid, f"{cpu:.1f}", format_bytes(memory)
             ))
@@ -323,11 +352,17 @@ class CubesMonitor:
             memory = psutil.virtual_memory()
             disk = psutil.disk_usage(os.path.abspath(os.sep))
             network = psutil.net_io_counters()
+            disk_io = psutil.disk_io_counters()
             now = time.monotonic()
             elapsed = max(now - self.previous_time, 0.001)
             download = max(0, network.bytes_recv - self.previous_net.bytes_recv) / elapsed
             upload = max(0, network.bytes_sent - self.previous_net.bytes_sent) / elapsed
+            disk_read = disk_write = 0.0
+            if disk_io is not None and self.previous_disk is not None:
+                disk_read = max(0, disk_io.read_bytes - self.previous_disk.read_bytes) / elapsed
+                disk_write = max(0, disk_io.write_bytes - self.previous_disk.write_bytes) / elapsed
             self.previous_net = network
+            self.previous_disk = disk_io
             self.previous_time = now
 
             while True:
@@ -356,7 +391,7 @@ class CubesMonitor:
                 text="● LIVE  •  ADMIN" if is_admin() else "● LIVE  •  STANDARD",
                 fg=GREEN if is_admin() else PURPLE,
             )
-            self._update_info(download, upload)
+            self._update_info(download, upload, disk_read, disk_write)
             self._draw_graph()
             self._update_processes()
         except (OSError, psutil.Error, tk.TclError) as error:
