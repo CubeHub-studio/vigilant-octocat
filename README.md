@@ -9,8 +9,10 @@ A free, local Windows system monitor built with Python, Tkinter, and psutil.
 - GPU name and best-effort GPU utilization (Windows performance counters; may be unavailable on some drivers)
 - System drive capacity and usage
 - Network download/upload rates
-- Disk read/write throughput
-- Top processes by CPU and memory
+- Live disk read/write throughput
+- Current CPU frequency
+- Filterable process list, sortable by CPU or memory usage
+- Top 30 matching processes by the selected sort order
 - Live CPU/RAM history graph
 - Standard-user operation; no account, telemetry, or paid service
 
@@ -48,4 +50,5 @@ The elevated archive should use CubesEPA's normal safety warning and Windows UAC
 
 - GPU utilization depends on Windows GPU Engine counters and the installed graphics driver. The GPU name can still be shown when utilization is unavailable.
 - Windows may restrict details for protected processes, especially when running as a standard user.
-- Network rates are system-wide totals, not per-process traffic.
+- Network and disk rates are system-wide totals, not per-process traffic.
+- CPU frequency and disk I/O counters depend on hardware/driver support; unavailable values may be omitted or shown as unavailable.
